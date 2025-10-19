@@ -1,0 +1,6 @@
+# One proxy per line. Formats supported by Selenium Wire:
+# http://host:port
+# http://user:password@host:port
+# socks5://host:port
+# socks5://user:password@host:port
+# Lines starting with # are ignored.
