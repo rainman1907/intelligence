@@ -1,0 +1,4 @@
+# Add proxies in host:port or scheme://host:port
+# Example:
+# http://user:pass@host:port
+# 1.2.3.4:8080
