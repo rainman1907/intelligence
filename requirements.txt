@@ -1,0 +1,7 @@
+selenium==4.37.0
+selenium-wire==5.1.0
+pandas>=2.0.0
+openpyxl>=3.0.0
+webdriver-manager>=4.0.0
+blinker==1.6.2
+setuptools>=60.0.0
