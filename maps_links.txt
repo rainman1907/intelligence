@@ -1,0 +1,3 @@
+# Her satıra bir Google Maps işletme/profil linki yazın
+# Örnek:
+# https://www.google.com/maps/place/Example+Place/@41.0082,28.9784,17z
