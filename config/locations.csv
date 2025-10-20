@@ -1,0 +1,4 @@
+label,latitude,longitude,accuracy_m,locale,timezone_id
+Seattle Downtown,47.6062,-122.3321,1000,en-US,America/Los_Angeles
+New York Midtown,40.7549,-73.9840,1000,en-US,America/New_York
+London Central,51.5074,-0.1278,1000,en-GB,Europe/London
