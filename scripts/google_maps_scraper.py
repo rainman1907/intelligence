@@ -1,13 +1,15 @@
 #!/usr/bin/env python3
 
 import asyncio
+import csv
 import json
+import os
 import re
 import sys
-import time
 from dataclasses import dataclass, asdict
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, Tuple
 
+from urllib.parse import urlparse
 from playwright.async_api import async_playwright, Page
 
 
@@ -23,6 +25,23 @@ class Business:
     reviews: Optional[Dict[str, Any]] = None  # {count: int, text: Optional[str]}
     profile_image: Optional[str] = None
     google_maps_url: Optional[str] = None
+
+
+@dataclass
+class Location:
+    label: Optional[str]
+    latitude: float
+    longitude: float
+    accuracy_m: Optional[float] = 1000.0
+    locale: Optional[str] = None
+    timezone_id: Optional[str] = None
+
+
+@dataclass
+class ProxyConfig:
+    server: str
+    username: Optional[str] = None
+    password: Optional[str] = None
 
 
 SEARCH_URL = "https://www.google.com/maps"
@@ -248,21 +267,57 @@ async def extract_business(page: Page) -> Business:
     )
 
 
-async def scrape(query: Optional[str] = None, url: Optional[str] = None, headless: bool = True) -> Business:
+async def scrape_single(
+    query: Optional[str] = None,
+    url: Optional[str] = None,
+    headless: bool = True,
+    location: Optional[Location] = None,
+    proxy: Optional[ProxyConfig] = None,
+) -> Business:
     if not query and not url:
         raise ValueError("Provide either a search query or a Google Maps place URL")
 
     async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=headless)
-        context = await browser.new_context(
-            viewport={"width": 1366, "height": 900},
-            user_agent=(
+        launch_kwargs: Dict[str, Any] = {"headless": headless}
+        if proxy is not None:
+            launch_kwargs["proxy"] = {
+                "server": proxy.server,
+                **({"username": proxy.username} if proxy.username else {}),
+                **({"password": proxy.password} if proxy.password else {}),
+            }
+        browser = await p.chromium.launch(**launch_kwargs)
+
+        context_kwargs: Dict[str, Any] = {
+            "viewport": {"width": 1366, "height": 900},
+            "user_agent": (
                 "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
                 "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
             ),
-            java_script_enabled=True,
-            locale="en-US",
-        )
+            "java_script_enabled": True,
+            "locale": (location.locale if location and location.locale else "en-US"),
+        }
+        if location is not None:
+            context_kwargs.update(
+                {
+                    "geolocation": {
+                        "latitude": location.latitude,
+                        "longitude": location.longitude,
+                        **(
+                            {"accuracy": float(location.accuracy_m)}
+                            if location.accuracy_m is not None
+                            else {}
+                        ),
+                    },
+                    "permissions": ["geolocation"],
+                    **(
+                        {"timezone_id": location.timezone_id}
+                        if location.timezone_id
+                        else {}
+                    ),
+                }
+            )
+
+        context = await browser.new_context(**context_kwargs)
         page = await context.new_page()
 
         if url:
@@ -276,6 +331,75 @@ async def scrape(query: Optional[str] = None, url: Optional[str] = None, headles
         await context.close()
         await browser.close()
         return business
+
+
+def _csv_value(row: Dict[str, str], *keys: str) -> Optional[str]:
+    for k in keys:
+        if k in row and row[k] != "":
+            return row[k]
+    return None
+
+
+def load_locations_csv(filepath: str) -> List[Location]:
+    if not os.path.exists(filepath):
+        return []
+    locations: List[Location] = []
+    with open(filepath, "r", encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            try:
+                lat_str = _csv_value(row, "latitude", "lat")
+                lon_str = _csv_value(row, "longitude", "lng", "lon")
+                if lat_str is None or lon_str is None:
+                    continue
+                latitude = float(lat_str)
+                longitude = float(lon_str)
+                label = _csv_value(row, "label", "name", "city", "location")
+                accuracy_m = _csv_value(row, "accuracy_m", "accuracy")
+                locale = _csv_value(row, "locale", "lang")
+                timezone_id = _csv_value(row, "timezone_id", "tz")
+                locations.append(
+                    Location(
+                        label=label,
+                        latitude=latitude,
+                        longitude=longitude,
+                        accuracy_m=float(accuracy_m) if accuracy_m else 1000.0,
+                        locale=locale,
+                        timezone_id=timezone_id,
+                    )
+                )
+            except Exception:
+                # Skip invalid rows
+                continue
+    return locations
+
+
+def parse_proxy_line(line: str) -> Optional[ProxyConfig]:
+    raw = line.strip()
+    if not raw or raw.startswith("#"):
+        return None
+    # Add default scheme if missing
+    if "://" not in raw:
+        raw = f"http://{raw}"
+    parsed = urlparse(raw)
+    if not parsed.hostname or not parsed.port:
+        return None
+    server = f"{parsed.scheme}://{parsed.hostname}:{parsed.port}"
+    username = parsed.username
+    password = parsed.password
+    return ProxyConfig(server=server, username=username, password=password)
+
+
+def load_proxies_file(filepath: str) -> List[ProxyConfig]:
+    if not os.path.exists(filepath):
+        return []
+    proxies: List[ProxyConfig] = []
+    with open(filepath, "r", encoding="utf-8") as f:
+        for line in f:
+            p = parse_proxy_line(line)
+            if p is not None:
+                proxies.append(p)
+    return proxies
 
 
 def to_csv_rows(biz_list: List[Business]) -> List[Dict[str, Any]]:
@@ -345,7 +469,7 @@ def build_arg_parser():
     import argparse
 
     parser = argparse.ArgumentParser(
-        description="Scrape Google Maps business details (single place)"
+        description="Scrape Google Maps business details (single place or batch by locations/proxies)"
     )
     grp = parser.add_mutually_exclusive_group(required=True)
     grp.add_argument("--query", type=str, help="Search query, e.g., 'coffee shop in Seattle'")
@@ -355,6 +479,34 @@ def build_arg_parser():
     parser.add_argument("--format", choices=["json", "csv"], default="json", help="Output format")
     parser.add_argument("--headed", action="store_true", help="Run browser in headed mode")
     parser.add_argument("--timeout", type=int, default=60, help="Overall timeout seconds")
+    parser.add_argument(
+        "--locations-file",
+        type=str,
+        default="config/locations.csv",
+        help=(
+            "CSV with columns: name/label, latitude/lat, longitude/lng, "
+            "[accuracy_m, locale, timezone_id]"
+        ),
+    )
+    parser.add_argument(
+        "--proxies-file",
+        type=str,
+        default="config/proxies.txt",
+        help=(
+            "Text file with one proxy per line. Formats: "
+            "host:port, http://host:port, http://user:pass@host:port, socks5://host:port"
+        ),
+    )
+    parser.add_argument(
+        "--ignore-locations",
+        action="store_true",
+        help="Ignore locations file even if present",
+    )
+    parser.add_argument(
+        "--ignore-proxies",
+        action="store_true",
+        help="Ignore proxies file even if present",
+    )
     return parser
 
 
@@ -362,17 +514,147 @@ def main():
     parser = build_arg_parser()
     args = parser.parse_args()
 
-    async def run_with_timeout():
-        return await asyncio.wait_for(
-            scrape(query=args.query, url=args.url, headless=not args.headed),
+    async def run_single() -> List[Business]:
+        business = await asyncio.wait_for(
+            scrape_single(
+                query=args.query,
+                url=args.url,
+                headless=not args.headed,
+            ),
             timeout=args.timeout,
         )
+        return [business]
+
+    async def run_batch() -> List[Business]:
+        locations = (
+            []
+            if args.ignore_locations
+            else load_locations_csv(args.locations_file)  # type: ignore[arg-type]
+        )
+        proxies = (
+            []
+            if args.ignore_proxies
+            else load_proxies_file(args.proxies_file)  # type: ignore[arg-type]
+        )
+
+        # If there are no locations and no proxies, fall back to single
+        if not locations and not proxies:
+            return await run_single()
+
+        results: List[Business] = []
+        headless = not args.headed
+
+        async with async_playwright() as p:
+            browser_no_proxy = None
+            if not proxies:
+                browser_no_proxy = await p.chromium.launch(headless=headless)
+
+            # Build an iteration plan: if locations exist, iterate them; otherwise single run using only proxy
+            iterations: List[Tuple[Optional[Location], Optional[ProxyConfig]]] = []
+            if locations:
+                for i, loc in enumerate(locations):
+                    proxy = proxies[i % len(proxies)] if proxies else None
+                    iterations.append((loc, proxy))
+            else:
+                # No locations, but proxies exist -> run once with first proxy
+                iterations.append((None, proxies[0]))
+
+            for loc, proxy in iterations:
+                try:
+                    if proxy is not None:
+                        # Launch per-proxy
+                        launch_kwargs: Dict[str, Any] = {
+                            "headless": headless,
+                            "proxy": {
+                                "server": proxy.server,
+                                **(
+                                    {"username": proxy.username}
+                                    if proxy.username
+                                    else {}
+                                ),
+                                **(
+                                    {"password": proxy.password}
+                                    if proxy.password
+                                    else {}
+                                ),
+                            },
+                        }
+                        browser = await p.chromium.launch(**launch_kwargs)
+                    else:
+                        # Reuse shared browser without proxy
+                        assert browser_no_proxy is not None
+                        browser = browser_no_proxy
+
+                    context_kwargs: Dict[str, Any] = {
+                        "viewport": {"width": 1366, "height": 900},
+                        "user_agent": (
+                            "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+                            "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+                        ),
+                        "java_script_enabled": True,
+                        "locale": (loc.locale if loc and loc.locale else "en-US"),
+                    }
+                    if loc is not None:
+                        context_kwargs.update(
+                            {
+                                "geolocation": {
+                                    "latitude": loc.latitude,
+                                    "longitude": loc.longitude,
+                                    **(
+                                        {"accuracy": float(loc.accuracy_m)}
+                                        if loc.accuracy_m is not None
+                                        else {}
+                                    ),
+                                },
+                                "permissions": ["geolocation"],
+                                **(
+                                    {"timezone_id": loc.timezone_id}
+                                    if loc.timezone_id
+                                    else {}
+                                ),
+                            }
+                        )
+
+                    context = await browser.new_context(**context_kwargs)
+                    page = await context.new_page()
+
+                    async def do_one():
+                        if args.url:
+                            await open_place_url(page, args.url)
+                        else:
+                            await search_query(page, args.query)  # type: ignore[arg-type]
+                            await open_first_result(page)
+                        return await extract_business(page)
+
+                    business = await asyncio.wait_for(do_one(), timeout=args.timeout)
+                    results.append(business)
+                except Exception as e:
+                    print(
+                        f"Run failed for location={getattr(loc, 'label', None)} proxy={getattr(proxy, 'server', None)}: {e}",
+                        file=sys.stderr,
+                    )
+                finally:
+                    try:
+                        await context.close()  # type: ignore[has-type]
+                    except Exception:
+                        pass
+                    if proxy is not None:
+                        try:
+                            await browser.close()  # type: ignore[has-type]
+                        except Exception:
+                            pass
+
+            if browser_no_proxy is not None:
+                try:
+                    await browser_no_proxy.close()
+                except Exception:
+                    pass
+
+        return results
 
     try:
-        business = asyncio.run(run_with_timeout())
-    except asyncio.TimeoutError:
-        print("Timed out while scraping.", file=sys.stderr)
-        sys.exit(2)
+        # Prefer batch if files are present (and not ignored)
+        results = asyncio.run(run_batch())
     except KeyboardInterrupt:
         print("Interrupted.", file=sys.stderr)
         sys.exit(130)
@@ -380,7 +662,7 @@ def main():
         print(f"Error: {e}", file=sys.stderr)
         sys.exit(1)
 
-    write_output([business], output=args.output, fmt=args.format)
+    write_output(results, output=args.output, fmt=args.format)
 
 
 if __name__ == "__main__":

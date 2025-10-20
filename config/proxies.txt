@@ -1,0 +1,5 @@
+# Examples:
+# host:port
+# http://host:port
+# http://user:pass@host:port
+# socks5://host:port
