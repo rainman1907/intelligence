@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 from typing import Optional
 
 import undetected_chromedriver as uc
@@ -18,10 +17,7 @@ def _add_base_chrome_args(options: ChromeOptions, headless: bool, lang: str) -> 
         options.add_argument("--headless=new")
 
 
-def _apply_user_data_dir(options: ChromeOptions, user_data_dir: Optional[str]) -> None:
-    if user_data_dir:
-        os.makedirs(user_data_dir, exist_ok=True)
-        options.add_argument(f"--user-data-dir={user_data_dir}")
+# Note: user data dir support removed (no persistent login)
 
 
 def _apply_proxy(options: ChromeOptions, proxy: Optional[str]) -> None:
@@ -45,13 +41,11 @@ def _apply_proxy(options: ChromeOptions, proxy: Optional[str]) -> None:
 def create_driver(
     proxy: Optional[str] = None,
     headless: bool = True,
-    user_data_dir: Optional[str] = None,
     lang: str = "en-US",
 ) -> uc.Chrome:
     """Create and return an undetected Chrome WebDriver instance."""
     options = uc.ChromeOptions()
     _add_base_chrome_args(options, headless=headless, lang=lang)
-    _apply_user_data_dir(options, user_data_dir)
     _apply_proxy(options, proxy)
 
     driver = uc.Chrome(options=options)

@@ -10,7 +10,6 @@ from typing import Dict, Iterable, List, Optional
 
 from rich.console import Console
 
-from gmaps_scraper.cookies import inject_cookies, load_cookies_from_file
 from gmaps_scraper.driver import create_driver
 from gmaps_scraper.proxies import parse_proxies_file, round_robin
 from gmaps_scraper.scraper import (
@@ -70,11 +69,9 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser = argparse.ArgumentParser(description="Google Maps scraper (Selenium + undetected-chromedriver)")
     parser.add_argument("--locations", default="config/locations.csv", help="CSV file with a 'query' column")
     parser.add_argument("--proxies", default="config/proxies.txt", help="Text file with proxies (optional)")
-    parser.add_argument("--cookies", default=None, help="Path to cookies file (JSON or Netscape cookies.txt)")
     parser.add_argument("--headless", action="store_true", help="Run Chrome in headless mode")
     parser.add_argument("--max-places", type=int, default=20, help="Max places per query")
     parser.add_argument("--lang", default="en-US", help="Chrome UI language")
-    parser.add_argument("--user-data-dir", default=None, help="Chrome user data dir for persistent login")
     parser.add_argument("--output", default=None, help="Output CSV path")
 
     args = parser.parse_args(argv)
@@ -91,21 +88,15 @@ def main(argv: Optional[List[str]] = None) -> int:
     console.print(f"[bold green]Loaded {len(queries)} queries[/bold green]")
     if proxies:
         console.print(f"[bold cyan]Using {len(proxies)} proxies (round-robin)[/bold cyan]")
-    if args.cookies:
-        console.print("[bold cyan]Cookie-based login enabled[/bold cyan]")
-        cookies = load_cookies_from_file(args.cookies)
-    else:
-        cookies = None
+    # Cookie/Gmail login removed — scraper runs without authentication
 
     for idx, query in enumerate(queries, start=1):
         proxy = next(proxy_cycle)
         proxy_raw = proxy.raw if proxy else None
         console.print(f"[bold]({idx}/{len(queries)})[/bold] Query: {query}  Proxy: {proxy_raw or 'none'}")
 
-        driver = create_driver(proxy=proxy_raw, headless=args.headless, user_data_dir=args.user_data_dir, lang=args.lang)
+        driver = create_driver(proxy=proxy_raw, headless=args.headless, lang=args.lang)
         try:
-            if cookies:
-                inject_cookies(driver, cookies)
             go_to_maps_home(driver)
             perform_search(driver, query)
             urls = collect_place_urls(driver, max_places=args.max_places)
