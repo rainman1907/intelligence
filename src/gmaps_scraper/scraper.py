@@ -4,6 +4,7 @@ import json
 import random
 import time
 from typing import Dict, List, Optional
+from urllib.parse import quote_plus
 
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
@@ -26,18 +27,21 @@ def _sleep_jitter(min_s: float = 0.6, max_s: float = 1.8) -> None:
 
 
 def go_to_maps_home(driver: WebDriver) -> None:
-    driver.get("https://www.google.com/maps")
+    # Force English UI to stabilize aria-labels and layout
+    driver.get("https://www.google.com/maps?hl=en&gl=US")
     _sleep_jitter()
 
 
 def perform_search(driver: WebDriver, query: str) -> None:
-    _wait(driver, EC.presence_of_element_located((By.CSS_SELECTOR, 'input[aria-label="Search Google Maps"]')))
-    box = driver.find_element(By.CSS_SELECTOR, 'input[aria-label="Search Google Maps"]')
-    box.clear()
-    box.send_keys(query)
-    _sleep_jitter(0.2, 0.6)
-    box.send_keys(Keys.ENTER)
-    _wait(driver, EC.presence_of_element_located((By.CSS_SELECTOR, 'div[role="feed"]')))
+    # Navigate directly to the search results URL to avoid locale-dependent selectors
+    q = quote_plus(query)
+    driver.get(f"https://www.google.com/maps/search/{q}?hl=en&gl=US")
+    # Wait for results feed or presence of place links as a fallback
+    try:
+        _wait(driver, EC.presence_of_element_located((By.CSS_SELECTOR, 'div[role="feed"]')), timeout=WAIT_LONG)
+    except Exception:
+        _wait(driver, EC.presence_of_element_located((By.CSS_SELECTOR, 'a[href*="/place/"]')),
+              timeout=WAIT_LONG)
 
 
 def _get_result_cards(driver: WebDriver):
@@ -47,10 +51,20 @@ def _get_result_cards(driver: WebDriver):
 def collect_place_urls(driver: WebDriver, max_places: int = 20) -> List[str]:
     urls: List[str] = []
     seen = set()
-    container = _wait(driver, EC.presence_of_element_located((By.CSS_SELECTOR, 'div[role="feed"]')))
+    # Use the feed container if available, otherwise fall back to window scrolling
+    try:
+        container = _wait(driver, EC.presence_of_element_located((By.CSS_SELECTOR, 'div[role="feed"]')),
+                          timeout=WAIT_MED)
+        use_container_scroll = True
+    except Exception:
+        container = None
+        use_container_scroll = False
 
     def scroll_once():
-        driver.execute_script("arguments[0].scrollBy(0, arguments[0].scrollHeight);", container)
+        if use_container_scroll and container is not None:
+            driver.execute_script("arguments[0].scrollBy(0, arguments[0].scrollHeight);", container)
+        else:
+            driver.execute_script("window.scrollBy(0, document.body.scrollHeight);")
 
     stagnant_rounds = 0
     while len(urls) < max_places and stagnant_rounds < 6:
