@@ -1,0 +1,3 @@
+# Each line: email:password
+# Example entries below. Replace with real credentials before running.
+example.user@gmail.com:supersecurepassword123
