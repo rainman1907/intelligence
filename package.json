@@ -1,0 +1,17 @@
+{
+  "name": "google-maps-latest-assets",
+  "version": "1.0.0",
+  "description": "Scrapes the latest Google Maps photo and review data into an Excel workbook.",
+  "main": "maps_scraper.js",
+  "license": "MIT",
+  "scripts": {
+    "start": "node maps_scraper.js"
+  },
+  "dependencies": {
+    "puppeteer": "^23.8.0",
+    "puppeteer-extra": "^3.3.6",
+    "puppeteer-extra-plugin-stealth": "^2.11.1",
+    "user-agents": "^1.1.320",
+    "xlsx": "^0.18.5"
+  }
+}
