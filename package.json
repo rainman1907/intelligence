@@ -1,0 +1,16 @@
+{
+  "name": "google-maps-latest-review-photo",
+  "version": "1.0.0",
+  "description": "Puppeteer scraper that fetches the newest review and original photo URL for Google Maps business listings.",
+  "main": "google-maps-scraper.js",
+  "scripts": {
+    "start": "node google-maps-scraper.js"
+  },
+  "dependencies": {
+    "puppeteer": "^23.7.0",
+    "puppeteer-extra": "^3.4.1",
+    "puppeteer-extra-plugin-stealth": "^2.11.2",
+    "user-agents": "^1.1.102",
+    "xlsx": "^0.18.5"
+  }
+}
